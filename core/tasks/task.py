@@ -131,6 +131,9 @@ class Task:
             "next_run_at": self.next_run_at,
             "last_run_at": self.last_run_at,
             "retry_count": self.retry_count,
+            "goal_id": self.goal_id,
+            "requires_approval": self.requires_approval,
+            "approval_reasoning": self.approval_reasoning,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -149,6 +152,9 @@ class Task:
             next_run_at=data.get("next_run_at"),
             last_run_at=data.get("last_run_at"),
             retry_count=int(data.get("retry_count", 0)),
+            goal_id=data.get("goal_id"),
+            requires_approval=data.get("requires_approval", False),
+            approval_reasoning=data.get("approval_reasoning"),
             created_at=data.get("created_at", datetime.now().isoformat()),
             updated_at=data.get("updated_at", datetime.now().isoformat()),
         )
