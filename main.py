@@ -415,7 +415,6 @@ def main():
         """Callback when autonomy makes a decision."""
         logger.log_autonomy_decision(decision.to_dict())
 
-    task_manager.start_background_worker(_background_task_runner)
     scheduler.start(_task_executor_callback)
     autonomy_loop.set_decision_callback(_on_autonomy_decision)
     autonomy_loop.start()
@@ -691,8 +690,6 @@ def main():
         autonomy_loop.stop()
     if scheduler:
         scheduler.stop()
-    if task_manager:
-        task_manager.stop_background_worker()
 
 
 if __name__ == "__main__":
