@@ -1,0 +1,11 @@
+# Core dependencies
+rich>=13.0.0
+
+# Optional: For Ollama support
+requests>=2.28.0
+
+# Optional: For Anthropic API support
+anthropic>=0.8.0
+
+# Optional: For OpenAI API support (can be added)
+# openai>=1.0.0
