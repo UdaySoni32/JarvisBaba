@@ -78,7 +78,7 @@ class Agent:
         self.llm = llm
         self.memory = memory
         self.available_tools = available_tools or []
-        self._autonomy_enabled = False
+        self._autonomy_mode = "off"  # off, suggest, assist, full
 
     def _build_system_prompt(self) -> str:
         """Build system prompt for agent."""
@@ -231,17 +231,28 @@ Respond with JSON:
         """
         return ScheduleParser.parse_schedule_intent(user_input)
 
-    def enable_autonomy(self) -> None:
-        """Enable autonomous decision-making."""
-        self._autonomy_enabled = True
+    def set_autonomy_mode(self, mode: str) -> bool:
+        """Set autonomy mode: off, suggest, assist, or full."""
+        if mode.lower() not in {"off", "suggest", "assist", "full"}:
+            return False
+        self._autonomy_mode = mode.lower()
+        return True
 
-    def disable_autonomy(self) -> None:
-        """Disable autonomous decision-making."""
-        self._autonomy_enabled = False
+    def get_autonomy_mode(self) -> str:
+        """Get current autonomy mode."""
+        return self._autonomy_mode
 
     def is_autonomy_enabled(self) -> bool:
-        """Check if autonomy is enabled."""
-        return self._autonomy_enabled
+        """Check if autonomy is enabled (compatibility method)."""
+        return self._autonomy_mode != "off"
+
+    def enable_autonomy(self) -> None:
+        """Enable autonomy with FULL mode (compatibility)."""
+        self._autonomy_mode = "full"
+
+    def disable_autonomy(self) -> None:
+        """Disable autonomy (set to OFF mode)."""
+        self._autonomy_mode = "off"
 
     def decide(self, user_input: str) -> AgentDecision:
         """Process user input and return decision."""

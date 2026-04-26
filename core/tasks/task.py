@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 
-TASK_STATUSES = {"pending", "running", "paused", "completed", "failed"}
+TASK_STATUSES = {"pending", "running", "paused", "waiting_approval", "completed", "failed"}
 TASK_MODES = {"foreground", "background"}
 SCHEDULE_TYPES = {"immediate", "delayed", "recurring"}
 
@@ -27,6 +27,9 @@ class Task:
     next_run_at: Optional[str] = None
     last_run_at: Optional[str] = None
     retry_count: int = 0
+    goal_id: Optional[str] = None
+    requires_approval: bool = False
+    approval_reasoning: Optional[str] = None
     id: str = field(default_factory=lambda: str(uuid4()))
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -50,9 +53,10 @@ class Task:
             raise ValueError(f"Invalid task status: {new_status}")
 
         allowed = {
-            "pending": {"running", "paused", "failed", "completed"},
-            "running": {"paused", "completed", "failed", "pending"},
-            "paused": {"pending", "running", "failed"},
+            "pending": {"running", "paused", "waiting_approval", "failed", "completed"},
+            "running": {"paused", "completed", "failed", "pending", "waiting_approval"},
+            "paused": {"pending", "running", "failed", "waiting_approval"},
+            "waiting_approval": {"pending", "running", "failed", "completed"},
             "completed": {"pending"},
             "failed": {"pending"},
         }

@@ -52,6 +52,9 @@ class TaskManager:
         steps: Optional[List[Dict]] = None,
         schedule: Optional[Dict] = None,
         trigger: Optional[Dict] = None,
+        goal_id: Optional[str] = None,
+        requires_approval: bool = False,
+        approval_reasoning: Optional[str] = None,
     ) -> Task:
         with self._lock:
             if self._active_task_count() >= self.queue_size_limit:
@@ -64,6 +67,9 @@ class TaskManager:
                 steps=steps or [],
                 schedule=schedule or {"type": "immediate", "run_at": None, "interval": None},
                 trigger=trigger,
+                goal_id=goal_id,
+                requires_approval=requires_approval,
+                approval_reasoning=approval_reasoning,
             )
             self._tasks[task.id] = task
             self._persist_tasks()
@@ -246,6 +252,47 @@ class TaskManager:
             self._active_execution.pop(task_id, None)
             self._persist_tasks()
             return outcome
+
+    def list_tasks_for_goal(self, goal_id: str) -> List[Task]:
+        """List all tasks linked to a specific goal."""
+        with self._lock:
+            return [t for t in self._tasks.values() if t.goal_id == goal_id]
+
+    def list_pending_approvals(self) -> List[Task]:
+        """List all tasks waiting for approval."""
+        with self._lock:
+            return [t for t in self._tasks.values() if t.status == "waiting_approval"]
+
+    def set_task_approval_needed(self, task_id: str, reasoning: str):
+        """Mark a task as requiring approval (async)."""
+        with self._lock:
+            task = self._require_task(task_id)
+            task.requires_approval = True
+            task.approval_reasoning = reasoning
+            if task.status == "pending":
+                task.transition_to("waiting_approval")
+            self._persist_tasks()
+
+    def approve_task(self, task_id: str) -> bool:
+        """Approve a task waiting for approval."""
+        with self._lock:
+            task = self._require_task(task_id)
+            if task.status != "waiting_approval":
+                return False
+            task.transition_to("pending")
+            self._persist_tasks()
+            return True
+
+    def reject_task(self, task_id: str, reason: str) -> bool:
+        """Reject a task waiting for approval."""
+        with self._lock:
+            task = self._require_task(task_id)
+            if task.status != "waiting_approval":
+                return False
+            task.transition_to("failed")
+            task.steps.append({"id": "task-rejected", "status": "failed", "reason": reason})
+            self._persist_tasks()
+            return True
 
     def _claim_with_priority_and_fairness(self, candidates: List[Task], now: datetime, limit: int) -> List[Task]:
         heap = []

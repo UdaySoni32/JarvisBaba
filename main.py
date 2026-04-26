@@ -42,6 +42,9 @@ from core.tools.schema import get_tool_schemas
 from core.validator import ToolValidator
 from core.logging import ExecutionLogger
 from core.tasks.task_manager import TaskManager
+from core.goals.goal_manager import GoalManager
+from core.alignment import AlignmentLayer
+from core.learning import PatternMemory, FeedbackCollector
 from core.scheduler import Scheduler
 from core.events import EventBus
 from core.context_aggregator import ContextAggregator
@@ -375,9 +378,21 @@ def main():
         task_manager = TaskManager()
         event_bus = EventBus()
         scheduler = Scheduler(task_manager, event_bus, max_concurrent=2, poll_interval=1.0)
+        goal_manager = GoalManager()
+        alignment_layer = AlignmentLayer()
+        pattern_memory = PatternMemory()
+        feedback_collector = FeedbackCollector(pattern_memory)
         
         context_agg = ContextAggregator(task_manager, event_bus)
-        decision_engine = DecisionEngine(context_agg, task_manager, llm=llm, confidence_threshold=0.7)
+        decision_engine = DecisionEngine(
+            context_agg,
+            task_manager,
+            goal_manager=goal_manager,
+            alignment_layer=alignment_layer,
+            pattern_memory=pattern_memory,
+            llm=llm,
+            confidence_threshold=0.7
+        )
         autonomy_loop = AutonomousLoop(decision_engine, task_manager, poll_interval=60.0, max_tasks_per_hour=5)
         
         if AUTONOMY_ENABLED:
@@ -587,6 +602,117 @@ def main():
                         tui.print_system_message(f"Task {task_id} cannot be cancelled", "warning")
                 except Exception as e:
                     tui.print_system_message(str(e), "error")
+                continue
+
+            # Goal management commands
+            create_goal_match = re.match(r"^create goal:\s*(.+?)(?:\spriority\s(\d+))?$", user_input.strip(), re.IGNORECASE)
+            if create_goal_match:
+                description = create_goal_match.group(1).strip()
+                priority = int(create_goal_match.group(2) or 5)
+                try:
+                    goal = goal_manager.create_goal(description, priority=priority)
+                    tui.print_system_message(f"Goal created: {goal.id[:8]}... - {description}", "success")
+                    logger.log_task_event("system", "goal_created", {"goal_id": goal.id, "description": description})
+                except Exception as e:
+                    tui.print_system_message(f"Error creating goal: {str(e)}", "error")
+                continue
+
+            if user_input.lower() == "list goals":
+                goals = goal_manager.list_goals()
+                if not goals:
+                    tui.print_system_message("No goals", "info")
+                else:
+                    tui.print_system_message("Active Goals:", "info")
+                    for goal in goals:
+                        tui.print_system_message(
+                            f"  [{goal.status}] {goal.id[:8]}... P{goal.priority}: {goal.description}",
+                            "info"
+                        )
+                continue
+
+            complete_goal_match = re.match(r"^complete goal\s+([a-zA-Z0-9-]+)$", user_input.strip(), re.IGNORECASE)
+            if complete_goal_match:
+                goal_id = complete_goal_match.group(1)
+                try:
+                    goal_manager.complete_goal(goal_id)
+                    tui.print_system_message(f"Goal {goal_id[:8]}... completed", "success")
+                    logger.log_task_event("system", "goal_completed", {"goal_id": goal_id})
+                except Exception as e:
+                    tui.print_system_message(f"Error completing goal: {str(e)}", "error")
+                continue
+
+            # Autonomy mode commands
+            autonomy_mode_match = re.match(r"^autonomy\s+(off|suggest|assist|full)$", user_input.strip(), re.IGNORECASE)
+            if autonomy_mode_match:
+                new_mode = autonomy_mode_match.group(1).lower()
+                if agent.set_autonomy_mode(new_mode):
+                    if new_mode != "off":
+                        autonomy_loop.enable()
+                    else:
+                        autonomy_loop.disable()
+                    tui.print_system_message(f"Autonomy mode set to: {new_mode.upper()}", "success")
+                    logger.log_task_event("system", "autonomy_mode_changed", {"mode": new_mode})
+                else:
+                    tui.print_system_message("Invalid autonomy mode", "error")
+                continue
+
+            if user_input.lower().startswith("autonomy status"):
+                mode = agent.get_autonomy_mode()
+                tui.print_system_message(f"Autonomy Mode: {mode.upper()}", "info")
+                decisions = autonomy_loop.get_recent_decisions(limit=3)
+                if decisions:
+                    tui.print_system_message("Recent Decisions:", "info")
+                    for d in decisions:
+                        action = "✓ ACT" if d.get("should_act") else "✗ WAIT"
+                        goal_id = d.get("goal_id", "N/A")
+                        tui.print_system_message(
+                            f"  {action} | Goal: {goal_id[:8] if goal_id else 'N/A'} | {d.get('reason')[:40]}",
+                            "info"
+                        )
+                continue
+
+            # Approval commands
+            approve_match = re.match(r"^approve\s+([a-zA-Z0-9-]+)$", user_input.strip(), re.IGNORECASE)
+            if approve_match:
+                task_id = approve_match.group(1)
+                try:
+                    approved = task_manager.approve_task(task_id)
+                    if approved:
+                        tui.print_system_message(f"Task {task_id[:8]}... approved", "success")
+                        logger.log_task_event(task_id, "approved")
+                    else:
+                        tui.print_system_message(f"Task {task_id} not in waiting_approval state", "warning")
+                except Exception as e:
+                    tui.print_system_message(f"Error approving task: {str(e)}", "error")
+                continue
+
+            reject_match = re.match(r"^reject\s+([a-zA-Z0-9-]+)(?:\s+(.+))?$", user_input.strip(), re.IGNORECASE)
+            if reject_match:
+                task_id = reject_match.group(1)
+                reason = reject_match.group(2) or "User rejected"
+                try:
+                    rejected = task_manager.reject_task(task_id, reason)
+                    if rejected:
+                        tui.print_system_message(f"Task {task_id[:8]}... rejected", "success")
+                        logger.log_task_event(task_id, "rejected", {"reason": reason})
+                    else:
+                        tui.print_system_message(f"Task {task_id} not in waiting_approval state", "warning")
+                except Exception as e:
+                    tui.print_system_message(f"Error rejecting task: {str(e)}", "error")
+                continue
+
+            # Show pending approvals
+            if user_input.lower() in {"list approvals", "pending approvals"}:
+                pending = task_manager.list_pending_approvals()
+                if not pending:
+                    tui.print_system_message("No pending approvals", "info")
+                else:
+                    tui.print_system_message(f"Pending Approvals ({len(pending)}):", "info")
+                    for task in pending:
+                        tui.print_system_message(
+                            f"  {task.id[:8]}... | {task.goal[:40]} | {task.approval_reasoning or 'N/A'}",
+                            "warning"
+                        )
                 continue
 
             tui.print_user_input(user_input)

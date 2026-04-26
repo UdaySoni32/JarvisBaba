@@ -118,14 +118,14 @@ class AutonomousLoop:
             pass
 
     def _maybe_create_task(self, decision: AutonomousDecision) -> None:
-        """Create a task if guardrails allow it."""
+        """Create a task if guardrails allow it (async approval)."""
         if not decision.proposed_task:
             return
 
         if not self._check_rate_limit():
             return
 
-        if self._is_duplicate_task(decision.proposed_task):
+        if self._is_duplicate_task(decision.proposed_task, decision.goal_id):
             return
 
         try:
@@ -133,7 +133,13 @@ class AutonomousLoop:
                 goal=decision.proposed_task.get("goal", "autonomous task"),
                 mode=decision.proposed_task.get("mode", "background"),
                 priority=int(decision.proposed_task.get("priority", 5)),
+                goal_id=decision.goal_id,
+                requires_approval=decision.requires_approval,
+                approval_reasoning=decision.reason if decision.requires_approval else None,
             )
+
+            if decision.requires_approval:
+                self.task_manager.set_task_approval_needed(task.id, decision.reason)
 
             with self._lock:
                 self._autonomous_tasks_created.append(task.id)
@@ -159,8 +165,8 @@ class AutonomousLoop:
 
             return recent < self.max_tasks_per_hour
 
-    def _is_duplicate_task(self, proposed: Dict[str, Any]) -> bool:
-        """Check if similar task already exists."""
+    def _is_duplicate_task(self, proposed: Dict[str, Any], goal_id: Optional[str] = None) -> bool:
+        """Check if similar task already exists (goal-aware)."""
         goal = proposed.get("goal", "").lower()
         if not goal:
             return False
@@ -169,10 +175,12 @@ class AutonomousLoop:
         for task in existing_tasks:
             if task.status in {"running", "pending"}:
                 if task.goal.lower() == goal:
-                    return True
+                    if goal_id is None or task.goal_id == goal_id:
+                        return True
 
                 if self._goal_similarity(task.goal.lower(), goal) > 0.8:
-                    return True
+                    if goal_id is None or task.goal_id == goal_id:
+                        return True
 
         return False
 
